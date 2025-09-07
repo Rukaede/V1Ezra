@@ -42,18 +42,17 @@ Rayfield:Notify({
    Image = nil,
 })
 
--- ⚙️ Services
+-- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CraftPill = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CraftPill")
 
--- ⚙️ State
+-- State
 local isCrafting = false
-local selectedRecipe = "Awaked Qi Pill"
-local selectedRarity = "100" -- default rarity
+local selectedRecipe = nil
+local selectedRarity = "100" -- default
 local totalToCraft = 0
 
--- 📜 Recipes (no rarity hardcoded)
--- "HerbName" only, rarity will be inserted later
+-- Recipes (no rarity appended here)
 local recipes = {
     ["Awaked Qi Pill"] = {
         "Herb_Blood Flower",
@@ -62,33 +61,62 @@ local recipes = {
         "Herb_Blood Flower",
         1
     },
-    -- Example to add more:
-    -- ["Lotus Pill"] = {"Herb_Lotus","Herb_Lotus","Herb_Blood Flower","Herb_Blood Flower",1},
+    -- add more recipes here
 }
 
--- 📥 DropDown (choose pill)
+-- Build options list from recipes keys
+local recipeOptions = {}
+for k, _ in pairs(recipes) do
+    table.insert(recipeOptions, k)
+end
+table.sort(recipeOptions)
+selectedRecipe = recipeOptions[1] -- default select first available
+
+-- Helper: build args table for a recipe, given rarity
+local function buildArgsForRecipe(recipeTbl, rarity)
+    local args = {}
+    local count = #recipeTbl
+    if count < 2 then
+        return nil, "recipe has too few entries"
+    end
+    local perAmount = recipeTbl[count] -- last value is per-craft quantity
+    for i = 1, count - 1 do
+        local ing = recipeTbl[i]
+        if type(ing) ~= "string" then
+            return nil, "invalid ingredient entry"
+        end
+        -- if ingredient already contains rarity suffix like "_100", keep as-is
+        if string.match(ing, "_%d+$") then
+            table.insert(args, ing)
+        else
+            table.insert(args, ing .. "_" .. tostring(rarity))
+        end
+    end
+    table.insert(args, perAmount)
+    return args
+end
+
+-- UI elements (assumes Tab exists)
 local DropDown = Tab:CreateDropdown({
     Name = "Select Pill Recipe",
-    Options = {"Awaked Qi Pill"},
-    CurrentOption = "Awaked Qi Pill",
+    Options = recipeOptions,
+    CurrentOption = selectedRecipe,
     Flag = "DropDown1",
     Callback = function(Option)
         selectedRecipe = Option
     end
 })
 
--- 📥 DropDown (choose rarity)
 local RarityDrop = Tab:CreateDropdown({
     Name = "Select Rarity",
     Options = {"1","10","100","1000","10000","100000"},
-    CurrentOption = "100",
+    CurrentOption = selectedRarity,
     Flag = "DropDown2",
     Callback = function(Option)
         selectedRarity = Option
     end
 })
 
--- 📥 Input box (amount)
 local InputBox = Tab:CreateInput({
     Name = "Craft Amount",
     PlaceholderText = "Enter amount (e.g. 1000)",
@@ -96,41 +124,113 @@ local InputBox = Tab:CreateInput({
     Callback = function(Text)
         local num = tonumber(Text)
         if num and num > 0 then
-            totalToCraft = num
+            totalToCraft = math.floor(num)
         else
             totalToCraft = 0
         end
     end
 })
 
--- 🎛 Toggle (auto craft)
+-- Toggle (auto craft)
 local Toggle = Tab:CreateToggle({
-   Name = "Auto Craft",
-   CurrentValue = false,
-   Flag = "Toggle1",
-   Callback = function(Value)
+    Name = "Auto Craft",
+    CurrentValue = false,
+    Flag = "Toggle1",
+    Callback = function(Value)
         isCrafting = Value
-        if Value and totalToCraft > 0 then
-            task.spawn(function()
-                for i = 1, totalToCraft do
-                    if not isCrafting then break end -- stop if toggle OFF
-                    local recipe = recipes[selectedRecipe]
-                    if not recipe then break end -- stop if recipe missing
 
-                    -- Build args with selected rarity
-                    local args = {
-                        recipe[1].."_"..selectedRarity,
-                        recipe[2].."_"..selectedRarity,
-                        recipe[3].."_"..selectedRarity,
-                        recipe[4].."_"..selectedRarity,
-                        recipe[5]
-                    }
-
-                    CraftPill:FireServer(unpack(args))
-                    task.wait(0.05)
-                end
-                isCrafting = false -- reset after loop finishes
-            end)
+        if not Value then
+            -- user turned toggle off -> loop (if running) will check isCrafting and stop
+            Rayfield:Notify({
+                Title = "Auto Craft",
+                Content = "Stopped by user",
+                Duration = 3
+            })
+            return
         end
-   end,
+
+        -- If toggled ON, validate inputs
+        if totalToCraft <= 0 then
+            Rayfield:Notify({
+                Title = "Auto Craft",
+                Content = "Set a valid Craft Amount (>0) first",
+                Duration = 4
+            })
+            isCrafting = false
+            return
+        end
+
+        local recipe = recipes[selectedRecipe]
+        if not recipe then
+            Rayfield:Notify({
+                Title = "Auto Craft",
+                Content = "Selected recipe doesn't exist",
+                Duration = 4
+            })
+            isCrafting = false
+            return
+        end
+
+        Rayfield:Notify({
+            Title = "Auto Craft",
+            Content = ("Starting: %s x%s (rarity %s)"):format(selectedRecipe, tostring(totalToCraft), tostring(selectedRarity)),
+            Duration = 4
+        })
+
+        task.spawn(function()
+            local finishedNormally = true
+            for i = 1, totalToCraft do
+                if not isCrafting then
+                    finishedNormally = false
+                    break
+                end
+
+                local args, err = buildArgsForRecipe(recipe, selectedRarity)
+                if not args then
+                    Rayfield:Notify({
+                        Title = "Auto Craft",
+                        Content = "Recipe error: " .. tostring(err),
+                        Duration = 6
+                    })
+                    finishedNormally = false
+                    break
+                end
+
+                local ok, fireErr = pcall(function()
+                    CraftPill:FireServer(table.unpack(args))
+                end)
+                if not ok then
+                    Rayfield:Notify({
+                        Title = "Auto Craft",
+                        Content = "Failed to fire CraftPill: " .. tostring(fireErr),
+                        Duration = 6
+                    })
+                    finishedNormally = false
+                    break
+                end
+
+                -- small delay to avoid spamming too fast
+                task.wait(0.05)
+            end
+
+            -- finished or stopped
+            if finishedNormally then
+                Rayfield:Notify({
+                    Title = "Auto Craft",
+                    Content = ("Finished crafting %s x%s"):format(selectedRecipe, tostring(totalToCraft)),
+                    Duration = 4
+                })
+            else
+                Rayfield:Notify({
+                    Title = "Auto Craft",
+                    Content = "Crafting stopped early",
+                    Duration = 3
+                })
+            end
+
+            isCrafting = false
+            -- do NOT attempt to forcibly change the UI toggle state here as Rayfield's API varies;
+            -- leaving the toggle for the user to toggle back off if needed.
+        end)
+    end,
 })
