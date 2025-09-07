@@ -7,24 +7,19 @@ local Window = Rayfield:CreateWindow({
    LoadingSubtitle = "by itzRealEzra",
    ShowText = "Rayfield", 
    Theme = "Default", 
-
    ToggleUIKeybind = "K", 
-
    DisableRayfieldPrompts = false,
    DisableBuildWarnings = false, 
-
    ConfigurationSaving = {
       Enabled = true,
       FolderName = nil,
       FileName = "Kaye Hub"
    },
-
    Discord = {
       Enabled = false, 
       Invite = "noinvitelink", 
       RememberJoins = true 
    },
-
    KeySystem = false, 
    KeySettings = {
       Title = "Untitled",
@@ -37,7 +32,7 @@ local Window = Rayfield:CreateWindow({
    }
 })
 
-local MainTab = Window:CreateTab("Farming", nil) -- Title, Image
+local MainTab = Window:CreateTab("Farming", nil)
 local Tab = Window:CreateTab("Main")
 
 Rayfield:Notify({
@@ -47,31 +42,72 @@ Rayfield:Notify({
    Image = nil,
 })
 
+-- ⚙️ Services
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CraftPill = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CraftPill")
+
+-- ⚙️ State
+local isCrafting = false
+local selectedRecipe = "Awaked Qi Pill"
+local totalToCraft = 0
+
+-- 📜 Recipes
+local recipes = {
+    ["Awaked Qi Pill"] = {
+        "Herb_Blood Flower_100",
+        "Herb_Blood Flower_100",
+        "Herb_Lotus_100",
+        "Herb_Blood Flower_100",
+        1
+    },
+    -- Add more pills here like:
+    -- ["Lotus Pill"] = {"Herb_Lotus_100","Herb_Lotus_100","Herb_Blood Flower_100","Herb_Blood Flower_100",1},
+}
+
+-- 📥 DropDown (choose pill)
+local DropDown = Tab:CreateDropdown({
+    Name = "Select Pill Recipe",
+    Options = {"Awaked Qi Pill"},
+    CurrentOption = "Awaked Qi Pill",
+    Flag = "DropDown1",
+    Callback = function(Option)
+        selectedRecipe = Option
+    end
+})
+
+-- 📥 Input box (amount)
+local InputBox = Tab:CreateInput({
+    Name = "Craft Amount",
+    PlaceholderText = "Enter amount (e.g. 1000)",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        local num = tonumber(Text)
+        if num and num > 0 then
+            totalToCraft = num
+        else
+            totalToCraft = 0
+        end
+    end
+})
+
+-- 🎛 Toggle (auto craft)
 local Toggle = Tab:CreateToggle({
    Name = "Auto Craft",
    CurrentValue = false,
-   Flag = "Toggle1", -- A flag is the identifier for the configuration file, make sure every element has a different flag if you're using configuration saving to ensure no overlaps
+   Flag = "Toggle1",
    Callback = function(Value)
-            local args = {
-    "Herb_Blood Flower_100",
-    "Herb_Blood Flower_100",
-    "Herb_Lotus_100",
-    "Herb_Blood Flower_100",
-    1
-}
-
-local ReplicatedStorage = game:GetService('ReplicatedStorage')
-local CraftPill = ReplicatedStorage:WaitForChild('Events'):WaitForChild('CraftPill')
-
-local function fireWithDelay()
-    for i = 1, 750 do
-        CraftPill:FireServer(unpack(args))
-        wait(0.01)
-    end
-end
-
-fireWithDelay()
-   -- The function that takes place when the toggle is pressed
-   -- The variable (Value) is a boolean on whether the toggle is true or false
+        isCrafting = Value
+        if Value and totalToCraft > 0 then
+            task.spawn(function()
+                for i = 1, totalToCraft do
+                    if not isCrafting then break end -- stop if toggle OFF
+                    local recipe = recipes[selectedRecipe]
+                    if not recipe then break end -- stop if recipe missing
+                    CraftPill:FireServer(unpack(recipe))
+                    task.wait(0.05)
+                end
+                isCrafting = false -- reset after loop finishes
+            end)
+        end
    end,
 })
